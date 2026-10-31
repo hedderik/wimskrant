@@ -111,3 +111,15 @@ Behandel deze cookie als een wachtwoord: deel `.env` met niemand.
 
 Trouw (DPG Media) toont eerst een cookiekeuze. De server kiest daar alleen functionele cookies
 (geen advertentietracking) en onthoudt die keuze zolang hij draait.
+
+Vanaf een hostingdienst kan Trouw de artikelen afschermen. Dan kan de server inloggen met je eigen
+abonnement, via de cookie van je ingelogde browser (net als bij NRC):
+
+1. Log in op trouw.nl in Chrome.
+2. Open de ontwikkelaarstools (⌥⌘I) → **Netwerk** → herlaad de pagina → klik op het eerste verzoek
+   (`www.trouw.nl`) → kopieer bij **Request Headers** de waarde van `cookie`.
+3. Zet die waarde op Render bij **wimskrant → Environment** als `TROUW_COOKIE` (thuis: in `.env`).
+4. Kijk in de logs: daar staat dan `Trouw wordt opgehaald met TROUW_COOKIE (ingelogd)` en `Controle Trouw: werkt`.
+
+Log daarna niet uit op trouw.nl in die browser: dan vervalt de cookie. Verloopt hij na een tijd,
+herhaal dan deze stappen. Behandel de cookie als een wachtwoord; zet hem nooit in GitHub.

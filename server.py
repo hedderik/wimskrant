@@ -109,6 +109,20 @@ DPG_POT = http.cookiejar.CookieJar()
 DPG = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(DPG_POT))
 
 
+def trouw_inloggen():
+    """Met TROUW_COOKIE (de cookie uit je eigen ingelogde browser) haalt de server Trouw op als abonnee.
+    De cookies gaan in DPG_POT, zodat ze samen met de cookiekeuze worden meegestuurd."""
+    for deel in os.environ.get("TROUW_COOKIE", "").split(";"):
+        naam, _, waarde = deel.strip().partition("=")
+        if naam and waarde:
+            DPG_POT.set_cookie(http.cookiejar.Cookie(
+                0, naam, waarde, None, False, ".trouw.nl", True, True, "/", True, True,
+                None, False, None, None, {}))
+
+
+trouw_inloggen()
+
+
 def krant_van(url):
     netloc = urllib.parse.urlparse(url).netloc
     return "trouw" if netloc.endswith("trouw.nl") else "nrc" if netloc.endswith("nrc.nl") else ""
@@ -732,8 +746,13 @@ def controleer_kranten():
             aantal = sum(len(s["artikelen"]) for s in secties)
             oordeel = "werkt" if alineas >= 3 else "LET OP: weinig artikeltekst"
             print(f"Controle {naam}: {oordeel} ({aantal} artikelen; eerste artikel {alineas} alinea's)", flush=True)
+        except urllib.error.HTTPError as e:
+            uitleg = " (de krant weigert dit serveradres)" if e.code in (401, 403, 429) else ""
+            print(f"Controle {naam}: LUKT NIET (HTTP {e.code}{uitleg}; {e.url})", flush=True)
         except Exception as e:
             print(f"Controle {naam}: LUKT NIET ({e})", flush=True)
+    if os.environ.get("TROUW_COOKIE"):
+        print("Trouw wordt opgehaald met TROUW_COOKIE (ingelogd).", flush=True)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ services:
         sync: false
       - key: WIMSKRANT_CODES
         sync: false
+      - key: TROUW_COOKIE
+        sync: false
       - key: WIMSKRANT_HOST
         value: 0.0.0.0
       - key: WIMSKRANT_DATA
