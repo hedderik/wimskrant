@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WimsKrant</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icoon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="WimsKrant">
+  <meta name="theme-color" content="#fbf8f1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="balk">
+    <a class="logo" href="/">WimsKrant</a>
+    <nav class="knoppen" id="krantknoppen" hidden>
+      <a class="knop" href="/">← Andere krant</a>
+    </nav>
+    <nav class="knoppen" id="leesknoppen" hidden>
+      <a class="knop" id="naar-voorpagina" href="/">← Voorpagina</a>
+      <button type="button" id="kleiner" aria-label="Letters kleiner">A−</button>
+      <button type="button" id="groter" aria-label="Letters groter">A+</button>
+    </nav>
+  </header>
+
+  <main id="keuze" class="start keuze" hidden>
+    <p class="dag" id="dag"></p>
+    <h1>Welke krant wilt u lezen?</h1>
+    <div class="kranten">
+      <a class="krant krant-nrc" href="/nrc">
+        <span class="krant-naam">NRC</span>
+        <span class="krant-uitleg">Nieuws en achtergronden</span>
+        <span class="krant-kop" data-krant="nrc"></span>
+        <span class="krant-ga">Kies NRC →</span>
+      </a>
+      <a class="krant krant-trouw" href="/trouw">
+        <span class="krant-naam">Trouw</span>
+        <span class="krant-uitleg">Nieuws, verdieping en geloof</span>
+        <span class="krant-kop" data-krant="trouw"></span>
+        <span class="krant-ga">Kies Trouw →</span>
+      </a>
+    </div>
+    <section id="eerder" hidden>
+      <h2>Eerder gelezen</h2>
+      <ul id="eerder-lijst"></ul>
+    </section>
+  </main>
+
+  <main id="start" class="start" hidden>
+    <h1 id="krant-titel">Vandaag in de krant</h1>
+    <nav id="rubrieken" class="rubrieken" aria-label="Rubrieken"></nav>
+    <p class="uitleg-start">Kies een artikel. Tik in het artikel op een onderstreept woord: dan ziet u wat dat betekent of wat er eerder over verteld is.</p>
+    <div id="voorpagina"><p class="bezig">De voorpagina wordt opgehaald…</p></div>
+  </main>
+
+  <main id="lezen" class="lezen" hidden>
+    <p id="bezig" class="bezig">Even geduld, het artikel wordt opgehaald…</p>
+    <article id="artikel"></article>
+  </main>
+
+  <div id="popup" class="popup" role="dialog" aria-modal="true" aria-label="Uitleg" hidden>
+    <div class="popup-kaart">
+      <div id="popup-inhoud"></div>
+      <button type="button" id="popup-sluit">Sluiten</button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

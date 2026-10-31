@@ -1,0 +1,10 @@
+# Geheimen: nooit op GitHub
+.env
+.geheim
+
+# Bewaarde uitleg per artikel (wordt op de server opnieuw gemaakt)
+begrippen/
+
+__pycache__/
+.DS_Store
+.claude/

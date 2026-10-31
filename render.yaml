@@ -1,0 +1,29 @@
+# Render-blueprint voor WimsKrant (zie README, "Hosten op Render").
+# Geheimen (API-sleutel, toegangscodes) staan hier bewust niet in: die vraagt Render bij het aanmaken.
+services:
+  - type: web
+    name: wimskrant
+    runtime: python
+    region: frankfurt
+    plan: starter
+    buildCommand: echo "Geen pakketten nodig"
+    startCommand: python3 server.py
+    healthCheckPath: /toegang
+    autoDeploy: true
+    disk:
+      name: wimskrant-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WIMSKRANT_CODES
+        sync: false
+      - key: WIMSKRANT_HOST
+        value: 0.0.0.0
+      - key: WIMSKRANT_DATA
+        value: /var/data
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: PYTHONUNBUFFERED
+        value: "1"

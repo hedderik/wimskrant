@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WimsKrant</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icoon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="WimsKrant">
+  <meta name="theme-color" content="#fbf8f1">
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="balk">
+    <span class="logo">WimsKrant</span>
+  </header>
+
+  <main class="start toegang">
+    <h1>Welkom bij WimsKrant</h1>
+    <p class="uitleg-start">Vul de toegangscode in die u heeft gekregen. Dit hoeft maar één keer: daarna onthoudt dit apparaat de code.</p>
+    <p id="fout" class="fout" role="alert" hidden></p>
+    <form method="post" action="/api/toegang" class="toegang-kaart">
+      <label for="code">Toegangscode</label>
+      <input id="code" name="code" type="text" required autofocus
+             autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <input type="hidden" name="terug" id="terug" value="/">
+      <button type="submit">Naar de krant</button>
+    </form>
+  </main>
+
+  <script>
+    const q = new URLSearchParams(location.search);
+    if (q.get("terug")) document.getElementById("terug").value = q.get("terug");
+    const meldingen = {
+      code: "Deze code klopt niet. Controleer de letters en probeer het nog eens.",
+      wacht: "Er is te vaak een verkeerde code ingevuld. Probeer het over een kwartier opnieuw.",
+    };
+    if (meldingen[q.get("fout")]) {
+      const fout = document.getElementById("fout");
+      fout.textContent = meldingen[q.get("fout")];
+      fout.hidden = false;
+    }
+  </script>
+</body>
+</html>
