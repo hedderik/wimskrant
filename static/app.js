@@ -414,6 +414,10 @@ async function toonArtikel(url) {
   const via = document.referrer && new URL(document.referrer);
   if (via && via.origin === location.origin && KRANTEN[via.pathname.split("/")[1]]) $("naar-voorpagina").href = via.pathname;
   else if (KRANTEN[art.krant]) $("naar-voorpagina").href = "/" + art.krant;
+  // Knop naar hetzelfde artikel op de website van de krant zelf.
+  $("naar-krant").href = art.url;
+  $("naar-krant").textContent = `${KRANTEN[art.krant] ? "In " + KRANTEN[art.krant] : "Origineel"} ↗`;
+  $("naar-krant").hidden = false;
   toon(art);
   koppel($("artikel"), art);
   letters();
