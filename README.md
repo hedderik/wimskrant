@@ -52,34 +52,12 @@ WIMSKRANT_CODES=wim:kies-een-lange-code,anna:een-andere-lange-code
 
 Zonder `WIMSKRANT_CODES` is de app voor iedereen open: prima thuis op de Mac, niet op internet.
 
-## Hosten op Render
+## Buiten het eigen netwerk
 
-`render.yaml` beschrijft de hele opzet: een webdienst in Frankfurt (Starter, ca. $7 per maand) met een
-schijf van 1 GB (ca. $0,25 per maand) waarop de uitleg en de cookiesleutel bewaard blijven.
-
-1. **GitHub**: maak op github.com een nieuwe, **privé** repository `wimskrant` (zonder README) en zet de code erin:
-   ```bash
-   git add -A && git commit -m "WimsKrant" && git remote add origin https://github.com/<jouw-naam>/wimskrant.git && git push -u origin main
-   ```
-   `.gitignore` zorgt dat `.env`, `.geheim` en `begrippen/` niet meegaan.
-2. **Render**: maak een account op render.com, kies **New → Blueprint** en koppel de repository.
-   Render leest `render.yaml` en vraagt om twee waarden:
-   - `ANTHROPIC_API_KEY`: je sleutel (dezelfde als in `.env`)
-   - `WIMSKRANT_CODES`: de toegangscodes, bijv. `wim:een-lange-code` (dezelfde als in je `.env`)
-3. Kies **Apply**. Na een paar minuten staat de site op `https://wimskrant.onrender.com` (of een
-   vergelijkbaar adres; zie het dashboard).
-4. **Controle**: open in het dashboard **Logs**. Vlak na het starten staat daar
-   `Controle NRC: werkt …` en `Controle Trouw: werkt …`. Staat er `LUKT NIET` of `LET OP`, dan blokkeert
-   die krant het datacenter van Render; zie hieronder.
-5. **Bijwerken**: na `git commit` en `git push` zet Render de nieuwe versie er vanzelf op.
-
-**Eerst gratis proberen?** Kies dan in plaats van stap 2 **New → Web Service**, plan **Free**, start-opdracht
-`python3 server.py`, en zet bij Environment `WIMSKRANT_HOST=0.0.0.0`, `WIMSKRANT_CODES` en (voor de uitleg)
-`ANTHROPIC_API_KEY`. De gratis versie heeft geen schijf en slaapt na een kwartier stilte, maar de
-controleregels in de logs laten zien of NRC en Trouw werken. Verwijder hem daarna en ga verder met stap 2.
-
-**Werkt een krant niet vanaf Render?** Dan kan WimsKrant thuis blijven draaien en via Tailscale Funnel of
-Cloudflare Tunnel een https-adres krijgen; dan haalt de server de artikelen op vanaf je eigen internetaansluiting.
+Hostingdiensten in een datacenter werken niet goed: Trouw weigert de artikelen dan (HTTP 403), ook met
+een ingelogde cookie. Laat WimsKrant daarom thuis op de Mac draaien. Wil je er ook buiten het eigen wifi
+bij, geef de Mac dan een https-adres via Tailscale Funnel of Cloudflare Tunnel; de artikelen komen dan
+via je eigen internetaansluiting. Stel in dat geval altijd `WIMSKRANT_CODES` in.
 
 ## Instellingen (`.env`)
 
@@ -112,14 +90,14 @@ Behandel deze cookie als een wachtwoord: deel `.env` met niemand.
 Trouw (DPG Media) toont eerst een cookiekeuze. De server kiest daar alleen functionele cookies
 (geen advertentietracking) en onthoudt die keuze zolang hij draait.
 
-Vanaf een hostingdienst kan Trouw de artikelen afschermen. Dan kan de server inloggen met je eigen
-abonnement, via de cookie van je ingelogde browser (net als bij NRC):
+Mocht Trouw ooit om inloggen vragen, dan kan de server je eigen abonnement gebruiken via de cookie van
+je ingelogde browser (net als bij NRC):
 
 1. Log in op trouw.nl in Chrome.
 2. Open de ontwikkelaarstools (⌥⌘I) → **Netwerk** → herlaad de pagina → klik op het eerste verzoek
    (`www.trouw.nl`) → kopieer bij **Request Headers** de waarde van `cookie`.
-3. Zet die waarde op Render bij **wimskrant → Environment** als `TROUW_COOKIE` (thuis: in `.env`).
-4. Kijk in de logs: daar staat dan `Trouw wordt opgehaald met TROUW_COOKIE (ingelogd)` en `Controle Trouw: werkt`.
+3. Zet die waarde in `.env` als `TROUW_COOKIE=...` en herstart de server.
+4. Kijk in het venster van de server: daar staat dan `Trouw wordt opgehaald met TROUW_COOKIE (ingelogd)` en `Controle Trouw: werkt`.
 
 Log daarna niet uit op trouw.nl in die browser: dan vervalt de cookie. Verloopt hij na een tijd,
 herhaal dan deze stappen. Behandel de cookie als een wachtwoord; zet hem nooit in GitHub.

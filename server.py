@@ -39,7 +39,7 @@ if (ROOT / ".env").is_file():
 
 STATIC = ROOT / "static"
 # Wat de server bewaart (uitleg per artikel, sleutel voor de toegangscookies). Bij hosting is dit
-# een blijvende schijf, bijv. WIMSKRANT_DATA=/var/data op Render; anders deze map.
+# een blijvende schijf, bijv. WIMSKRANT_DATA=/pad/naar/map; anders deze map.
 DATA = Path(os.environ.get("WIMSKRANT_DATA") or ROOT)
 BEGRIPPEN = DATA / "begrippen"
 PORT = int(os.environ.get("PORT", "8765"))
@@ -86,6 +86,8 @@ TOEGANG_DAGEN = 365
 VRIJ = {"/toegang", "/api/toegang", "/style.css", "/manifest.webmanifest", "/icoon-180.png", "/icoon-512.png"}
 POGINGEN = {}             # ip -> tijden van foute pogingen
 POGING_SLOT = threading.Lock()
+LOKAAL = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}  # een proxy op deze computer zelf
+PROXY_GEMELD = False
 
 ARTIKELEN = {}            # sleutel -> artikel (geheugen, zodat we niet steeds opnieuw ophalen)
 SLOTEN = {}               # sleutel -> lock, zodat een begrippenlijst maar één keer tegelijk wordt gemaakt
@@ -607,12 +609,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def via_proxy(self):
+        # Alleen een proxy op deze computer zelf (zoals Tailscale Funnel) mag X-Forwarded-* zetten;
+        # van andere apparaten in het netwerk worden die regels genegeerd, zodat niemand ze kan vervalsen.
+        global PROXY_GEMELD
+        if self.client_address[0] not in LOKAAL:
+            return False
+        if not PROXY_GEMELD and (self.headers.get("X-Forwarded-For") or self.headers.get("X-Forwarded-Proto")):
+            PROXY_GEMELD = True
+            print("Proxy gezien: echt bezoekersadres "
+                  + ("doorgegeven" if self.headers.get("X-Forwarded-For") else "ONTBREEKT")
+                  + ", https " + ("doorgegeven" if self.headers.get("X-Forwarded-Proto") else "ONTBREEKT"),
+                  flush=True)
+        return True
+
     def via_https(self):
-        return self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        return self.via_proxy() and self.headers.get("X-Forwarded-Proto", "").lower() == "https"
 
     def ip(self):
-        # Achter een proxy (bij hosting) staat het echte adres in X-Forwarded-For.
-        return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+        # Achter de proxy staat het echte adres in X-Forwarded-For (het laatste is door de proxy zelf gezet).
+        if self.via_proxy() and self.headers.get("X-Forwarded-For"):
+            return self.headers["X-Forwarded-For"].split(",")[-1].strip()
+        return self.client_address[0]
 
     def heeft_toegang(self, pad):
         if not CODES or pad in VRIJ:
@@ -763,6 +781,6 @@ if __name__ == "__main__":
         print("Let op: geen WIMSKRANT_CODES ingesteld, dus iedereen die het adres kent kan erbij.")
     print(f"Gegevens worden bewaard in {DATA}")
     threading.Thread(target=controleer_kranten, daemon=True).start()
-    if HOST == "0.0.0.0" and not os.environ.get("RENDER") and netwerkadres():
+    if HOST == "0.0.0.0" and netwerkadres():
         print(f"Op een iPad in hetzelfde wifi-netwerk: http://{netwerkadres()}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
