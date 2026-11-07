@@ -615,11 +615,12 @@ class Handler(BaseHTTPRequestHandler):
         global PROXY_GEMELD
         if self.client_address[0] not in LOKAAL:
             return False
-        if not PROXY_GEMELD and (self.headers.get("X-Forwarded-For") or self.headers.get("X-Forwarded-Proto")):
+        if not PROXY_GEMELD:
             PROXY_GEMELD = True
             print("Proxy gezien: echt bezoekersadres "
                   + ("doorgegeven" if self.headers.get("X-Forwarded-For") else "ONTBREEKT")
-                  + ", https " + ("doorgegeven" if self.headers.get("X-Forwarded-Proto") else "ONTBREEKT"),
+                  + ", https " + ("doorgegeven" if self.headers.get("X-Forwarded-Proto") else "ONTBREEKT")
+                  + " (headers: " + ", ".join(sorted(self.headers.keys())) + ")",
                   flush=True)
         return True
 
