@@ -256,3 +256,23 @@ mark.term.opgezocht { --kleur: #b3261e; }
   .krant { min-height: 0; padding: 1.4rem; }
   .krant-naam { font-size: 3.2rem; }
 }
+
+/* Voortgang terwijl de uitleg gemaakt wordt */
+.voortgang { margin: 0 0 1.25rem; max-width: 38rem; }
+.voortgang-tekst { margin: 0 0 .5rem; font-size: 1.05rem; color: var(--zacht); }
+.voortgang-balk { height: 8px; border-radius: 99px; background: var(--lijn); overflow: hidden; }
+.voortgang-vulling {
+  height: 100%; width: 4%; border-radius: inherit; background: var(--accent);
+  transition: width 1s ease-out;
+}
+/* Een net binnengekomen woord licht even zacht op */
+mark.term.nieuw { animation: verschijn 2.5s ease-out; }
+@keyframes verschijn { from { background: var(--markeer); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  mark.term.nieuw { animation: none; }
+  .voortgang-vulling { transition: none; }
+}
+
+/* Personen: naam bovenaan, met de andere namen uit het artikel */
+.noot .in-tekst { color: var(--zacht); font-weight: normal; }
+.noot .ook { display: block; margin: .15rem 0 .3rem; color: var(--zacht); font-size: .95em; }

@@ -94,9 +94,24 @@ function kaart(a) {
 
 // ---------- Woorden zoeken ----------
 
+// Losse voornaamwoorden nooit als vaste schrijfwijze gebruiken: "hij" kan steeds iemand anders zijn.
+// Tikt de lezer erop, dan zoekt /api/uitleg uit wie er bedoeld wordt.
+const VOORNAAMWOORDEN = new Set("hij zij ze hem haar zijn hun hen die deze dat wie zich jij u".split(" "));
+
 function maakZoeker(termen) {
   const vormen = [];
-  termen.forEach((t, i) => (t.vormen?.length ? t.vormen : [t.term]).forEach((v) => v && vormen.push({ v, i })));
+  termen.forEach((t, i) => (t.vormen?.length ? t.vormen : [t.term])
+    .forEach((v) => v && !VOORNAAMWOORDEN.has(v.trim().toLowerCase()) && vormen.push({ v, i })));
+  // Een schrijfwijze die bij meer dan één term hoort (bijv. een achternaam van vader én zoon) is
+  // dubbelzinnig: niet automatisch onderstrepen. Tikken erop laat /api/uitleg uitzoeken wie het is.
+  const terms = new Map();
+  vormen.forEach(({ v, i }) => {
+    const k = v.replace(/\s+/g, " ").toLowerCase();
+    terms.set(k, (terms.get(k) || new Set()).add(i));
+  });
+  for (let n = vormen.length - 1; n >= 0; n--) {
+    if (terms.get(vormen[n].v.replace(/\s+/g, " ").toLowerCase()).size > 1) vormen.splice(n, 1);
+  }
   vormen.sort((a, b) => b.v.length - a.v.length); // langste eerst: "Community Food Bank" vóór "Food Bank"
   const perVorm = new Map(vormen.map((x) => [x.v.replace(/\s+/g, " ").toLowerCase(), x]));
   const deel = vormen.map((x) => x.v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")).join("|");
@@ -128,14 +143,17 @@ function datumTekst(iso) {
 function bouwArtikel(art) {
   const termen = art.begrippen?.termen || [];
   const zoek = maakZoeker(termen);
-  NOTITIES.clear();
+  for (const k of [...NOTITIES.keys()]) if (!k.startsWith("v")) NOTITIES.delete(k); // zelf opgezochte woorden blijven
   const uitgelegd = new Set(); // woorden waarvan de uitleg al eerder klaarstond
   const getoond = new Set();   // voor het overzicht onderaan
   const delen = [];
 
+  let gelezen = ""; // tekst tot en met het huidige blok, om te zien welke namen al gevallen zijn
+
   // Welke notitie hoort bij dit woord in blok nr? null = geen (de lezer kent het al).
   function kiesNoot(t, i, nr, zoals) {
     const eerder = (t.feiten || []).filter((f) => f.nr < nr);
+    zoals = { tekst: zoals, naam: persoonsnaam(t), ook: (t.namen || []).filter((n) => gelezen.includes(n)) };
     if (t.uitleg && !uitgelegd.has(i)) {
       uitgelegd.add(i);
       return { html: notitieUitleg(t, i), eerste: true };
@@ -147,6 +165,7 @@ function bouwArtikel(art) {
 
   // Zet woorden in de tekst in een <mark>; de bijbehorende uitleg gaat naar NOTITIES (voor de popup).
   function verwerk(tekst, nr) {
+    gelezen += "\n" + tekst;
     let html = "", pos = 0;
     const gehad = new Set();
     for (const g of zoek(tekst)) {
@@ -160,16 +179,17 @@ function bouwArtikel(art) {
       NOTITIES.set(sleutel, n.html);
       const soort = termen[g.i].soort || "begrip";
       html += veilig(tekst.slice(pos, g.start));
-      html += `<mark class="term soort-${soort}" data-noot="${sleutel}" role="button" tabindex="0">${veilig(zoals)}</mark>`;
+      html += `<mark class="term soort-${soort}" data-noot="${sleutel}" data-i="${g.i}" role="button" tabindex="0">${veilig(zoals)}</mark>`;
       pos = g.eind;
     }
     html += veilig(tekst.slice(pos));
     return { html };
   }
 
-  function rij(nr, binnen) {
+  // Elk deel krijgt een vaste sleutel, zodat toon() alleen de delen vervangt die veranderd zijn.
+  function rij(nr, binnen, sleutel = "r" + nr) {
     const n = nr == null ? "" : ` data-nr="${nr}"`;
-    delen.push(`<section class="rij"${n}><div class="tekst">${binnen}</div></section>`);
+    delen.push(`<section class="rij" data-sleutel="${veilig(sleutel)}"${n}><div class="tekst">${binnen}</div></section>`);
   }
 
   const meta = [art.bron.toUpperCase(), datumTekst(art.datum), art.auteurs?.length ? "door " + art.auteurs.join(", ") : ""]
@@ -179,15 +199,16 @@ function bouwArtikel(art) {
 
   const samenvatting = art.begrippen?.samenvatting || [];
   if (samenvatting.length) {
-    delen.push(`<section class="rij"><div class="kort-samen"><h2>In het kort</h2><ul>${
+    delen.push(`<section class="rij" data-sleutel="samen"><div class="kort-samen"><h2>In het kort</h2><ul>${
       samenvatting.map((s) => `<li>${veilig(s)}</li>`).join("")}</ul></div></section>`);
-  } else if (art.kan_uitleggen) {
-    delen.push(`<p class="melding bezig-uitleg">De uitleg bij de woorden wordt gemaakt. Dat duurt ongeveer een minuut; u kunt alvast lezen.</p>`);
-  } else if (!art.begrippen) {
-    delen.push(`<p class="melding">Voor dit artikel is nog geen uitleg gemaakt. Zet een ANTHROPIC_API_KEY in het bestand .env om dat automatisch te laten doen.</p>`);
+  }
+  if (art.bezig || art.uitlegFout) {
+    delen.push(`<div class="voortgang-plek" data-sleutel="voortgang"></div>`);
+  } else if (!art.begrippen && !art.kan_uitleggen) {
+    delen.push(`<p class="melding" data-sleutel="geen">Voor dit artikel is nog geen uitleg gemaakt. Zet een ANTHROPIC_API_KEY in het bestand .env om dat automatisch te laten doen.</p>`);
   }
   if (art.kan_uitleggen) {
-    delen.push(`<p class="tip">Tik op een <span class="voorbeeld">onderstreept woord</span> voor uitleg. U kunt ook op elk ander woord tikken.</p>`);
+    delen.push(`<p class="tip" data-sleutel="tip">Tik op een <span class="voorbeeld">onderstreept woord</span> voor uitleg. U kunt ook op elk ander woord tikken.</p>`);
   }
 
   if (art.intro) {
@@ -195,13 +216,13 @@ function bouwArtikel(art) {
     rij(1, `<p class="intro">${intro.html}</p>`);
   }
   if (art.beeld && !art.blokken.some((b) => b.soort === "foto")) {
-    rij(null, `<figure class="beeld"><img src="${veilig(art.beeld)}" alt=""></figure>`);
+    rij(null, `<figure class="beeld"><img src="${veilig(art.beeld)}" alt=""></figure>`, "beeld");
   }
 
   for (const b of art.blokken) {
     if (b.soort === "foto") {
       const onder = b.bijschrift ? `<figcaption>${veilig(b.bijschrift)}</figcaption>` : "";
-      rij(null, `<figure class="beeld"><img src="${veilig(b.src)}" alt="${veilig(b.bijschrift)}" loading="lazy">${onder}</figure>`);
+      rij(null, `<figure class="beeld"><img src="${veilig(b.src)}" alt="${veilig(b.bijschrift)}" loading="lazy">${onder}</figure>`, "foto-" + b.src);
     } else {
       const a = verwerk(b.tekst, b.nr);
       rij(b.nr, b.soort === "kop" ? `<h2>${a.html}</h2>` : `<p>${a.html}</p>`);
@@ -214,9 +235,9 @@ function bouwArtikel(art) {
   const overzicht = Object.keys(KOPPEN).filter((s) => groepen[s]).map((s) =>
     `<h3>${KOPPEN[s]}</h3><dl>${groepen[s].sort((a, b) => a.term.localeCompare(b.term, "nl"))
       .map((t) => `<dt>${veilig(t.term)}</dt><dd>${veilig(samengevat(t))}</dd>`).join("")}</dl>`).join("");
-  if (overzicht) delen.push(`<section class="overzicht"><h2>Alle uitleg op een rij</h2>${overzicht}</section>`);
+  if (overzicht) delen.push(`<section class="overzicht" data-sleutel="overzicht"><h2>Alle uitleg op een rij</h2>${overzicht}</section>`);
 
-  delen.push(`<p class="bron">Bron: <a href="${veilig(art.url)}" target="_blank" rel="noopener">het originele artikel</a>. Uitleg bij de woorden: WimsKrant.</p>`);
+  delen.push(`<p class="bron" data-sleutel="bron">Bron: <a href="${veilig(art.url)}" target="_blank" rel="noopener">het originele artikel</a>. Uitleg bij de woorden: WimsKrant.</p>`);
   return delen.join("");
 }
 
@@ -231,21 +252,38 @@ function notitieUitleg(t, i) {
     <strong>${veilig(t.term)}</strong><p>${veilig(t.uitleg)}</p></div>`;
 }
 
+// Bij personen staat bovenaan altijd de naam, ook als in de tekst "zijn vader" of alleen de achternaam staat.
+function persoonsnaam(t) {
+  return t.soort === "persoon" ? t.term : null;
+}
+
+// Kop van een notitie: de naam (bij personen) of het woord zoals het in de tekst staat,
+// plus de andere namen waaronder het artikel deze persoon tot nu toe noemde.
+function kop(t, zoals) {
+  const naam = zoals.naam || zoals.tekst;
+  const anders = zoals.naam && !zoals.naam.toLowerCase().includes(zoals.tekst.toLowerCase())
+    ? ` <span class="in-tekst">(in de tekst: „${veilig(zoals.tekst)}”)</span>` : "";
+  const ook = [...new Set(zoals.ook)].filter((n) => !naam.toLowerCase().includes(n.toLowerCase()));
+  return `<strong>${veilig(naam)}</strong>${anders}` +
+    (ook.length ? `<span class="ook">Ook genoemd: ${ook.map(veilig).join(", ")}</span>` : "");
+}
+
 function notitieHerinnering(t, i, zoals, eerder) {
   const soort = t.soort || "begrip";
   // "de koning" + rol "de koning, bezoekt een azc" → alleen "bezoekt een azc"
   let r = t.rol || "";
-  if (r.toLowerCase().startsWith(zoals.toLowerCase())) r = r.slice(zoals.length).replace(/^[\s,:–-]+/, "");
+  const naam = zoals.naam || zoals.tekst;
+  if (r.toLowerCase().startsWith(naam.toLowerCase())) r = r.slice(naam.length).replace(/^[\s,:–-]+/, "");
   const rol = r ? `<span class="rol">${veilig(r)}</span>` : "";
   const feiten = eerder.slice(-3).map((f) => `<li>${veilig(f.feit)}</li>`).join("");
   return `<div class="noot herhaal soort-${soort}">
-    <span class="soort">Weet u nog?</span><strong>${veilig(zoals)}</strong>${rol ? " " + rol : ""}
+    <span class="soort">Weet u nog?</span>${kop(t, zoals)}${rol ? " " + rol : ""}
     <ul>${feiten}</ul></div>`;
 }
 
 function notitieKort(t, i, zoals) {
   return `<div class="noot herhaal soort-${t.soort || "begrip"}">
-    <span class="soort">Weet u nog?</span><strong>${veilig(zoals)}</strong>: ${veilig(t.kort || t.uitleg)}</div>`;
+    <span class="soort">Weet u nog?</span>${kop(t, zoals)}: ${veilig(t.kort || t.uitleg)}</div>`;
 }
 
 // ---------- Popup met uitleg ----------
@@ -385,14 +423,114 @@ function menubalk() {
 // ---------- Lezen ----------
 
 function toon(art) {
-  // Plek op de pagina vasthouden als de uitleg later binnenkomt.
-  const anker = [...document.querySelectorAll("#artikel .rij[data-nr]")].find((r) => r.getBoundingClientRect().bottom > 80);
+  const houder = $("artikel");
+  // Plek op de pagina vasthouden als er uitleg bijkomt.
+  const anker = [...houder.querySelectorAll(".rij[data-nr]")].find((r) => r.getBoundingClientRect().bottom > 80);
   const verschil = anker ? anker.getBoundingClientRect().top : 0;
-  $("artikel").innerHTML = bouwArtikel(art);
-  if (anker) {
-    const nieuw = document.querySelector(`#artikel .rij[data-nr="${anker.dataset.nr}"]`);
-    if (nieuw) window.scrollBy(0, nieuw.getBoundingClientRect().top - verschil);
+
+  // Alleen de delen vervangen die veranderd zijn. Delen met een zelf opgezocht woord of een
+  // open popup blijven staan, zodat de lezer niets kwijtraakt.
+  const nieuw = document.createElement("div");
+  nieuw.innerHTML = bouwArtikel(art);
+  const oud = new Map([...houder.children].map((el) => [el.dataset.sleutel, el]));
+  houder.replaceChildren(...[...nieuw.children].map((el) => {
+    const was = el.dataset.sleutel && oud.get(el.dataset.sleutel);
+    if (!was) return el;
+    if (el.dataset.sleutel === "voortgang" || was.outerHTML === el.outerHTML || was.querySelector(".opgezocht, .open")) return was;
+    return el;
+  }));
+
+  const plek = houder.querySelector(".voortgang-plek");
+  if (plek && !plek.contains(VOORTGANG)) plek.append(VOORTGANG);
+  toonVoortgang(art);
+
+  // Woorden die er net bij gekomen zijn, lichten even op.
+  const marks = [...houder.querySelectorAll("mark.term[data-i]")];
+  if (art.bekend) marks.forEach((m) => { if (!art.bekend.has(m.dataset.i)) m.classList.add("nieuw"); });
+  art.bekend = new Set(marks.map((m) => m.dataset.i));
+
+  if (anker && anker.isConnected) window.scrollBy(0, anker.getBoundingClientRect().top - verschil);
+  else if (anker) {
+    const zelfde = houder.querySelector(`.rij[data-nr="${anker.dataset.nr}"]`);
+    if (zelfde) window.scrollBy(0, zelfde.getBoundingClientRect().top - verschil);
   }
+}
+
+// ---------- Voortgang van de uitleg ----------
+
+const VOORTGANG = document.createElement("div");
+VOORTGANG.className = "voortgang";
+VOORTGANG.setAttribute("role", "status");
+VOORTGANG.innerHTML = `<p class="voortgang-tekst"></p><div class="voortgang-balk"><div class="voortgang-vulling"></div></div>`;
+
+function toonVoortgang(art) {
+  const tekst = VOORTGANG.querySelector(".voortgang-tekst");
+  const balk = VOORTGANG.querySelector(".voortgang-balk");
+  if (art.uitlegFout) {
+    tekst.textContent = art.uitlegFout;
+    balk.hidden = true;
+    return;
+  }
+  if (!art.bezig) return;
+  const termen = art.begrippen?.termen || [];
+  const n = termen.length;
+  tekst.textContent = n
+    ? `${n} ${n === 1 ? "woord" : "woorden"} uitgelegd. Er komen er nog meer bij; u kunt gewoon doorlezen.`
+    : art.begrippen?.samenvatting?.length
+      ? "De samenvatting staat klaar. Nu volgen de woorden in het artikel…"
+      : "De uitleg bij dit artikel wordt gemaakt. U kunt alvast lezen; de onderstreepte woorden komen er vanzelf bij.";
+  // Schatting: hoeveel woorden er (gemeten) ongeveer komen, ca. 8 + 1 per 70 woorden tekst, hooguit 40;
+  // de klok houdt de balk in beweging zolang er nog niets binnen is (ca. 1,5 s per woord).
+  const lengte = art.blokken.reduce((s, b) => s + (b.tekst || "").split(/\s+/).length, 0);
+  const verwacht = Math.min(40, 8 + lengte / 70);
+  const sec = (Date.now() - art.begin) / 1000;
+  const klok = 0.9 * (1 - Math.exp(-sec / (verwacht * 1.6)));
+  const deel = Math.min(0.95, Math.max(art.deel || 0.04, klok, (n / verwacht) * 0.95));
+  art.deel = deel;
+  VOORTGANG.querySelector(".voortgang-vulling").style.width = Math.round(deel * 100) + "%";
+}
+
+async function laadUitleg(art) {
+  art.bezig = true;
+  art.begin = Date.now();
+  art.begrippen = { samenvatting: [], termen: [] };
+  toon(art);
+  const klok = setInterval(() => toonVoortgang(art), 1000);
+  let gepland = null;
+  const straks = () => { gepland ||= setTimeout(() => { gepland = null; toon(art); }, 1200); };
+  try {
+    const r = await fetch("/api/begrippen?url=" + encodeURIComponent(art.url));
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).fout || "");
+    const lezer = r.body.getReader();
+    const ontcijfer = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await lezer.read();
+      if (done) break;
+      buffer += ontcijfer.decode(value, { stream: true });
+      let k;
+      while ((k = buffer.indexOf("\n\n")) >= 0) {
+        const blok = buffer.slice(0, k);
+        buffer = buffer.slice(k + 2);
+        const soort = /^event: (.*)$/m.exec(blok)?.[1];
+        const data = /^data: (.*)$/m.exec(blok)?.[1];
+        if (!soort || !data) continue;
+        const d = JSON.parse(data);
+        if (soort === "samenvatting") { art.begrippen.samenvatting = d; straks(); }
+        else if (soort === "term") { art.begrippen.termen.push(d); straks(); }
+        else if (soort === "klaar") { art.begrippen = d; art.bezig = false; }
+        else if (soort === "fout") throw new Error(d.fout);
+      }
+    }
+    if (art.bezig) throw new Error("De verbinding viel weg.");
+  } catch (e) {
+    art.bezig = false;
+    art.uitlegFout = "Het maken van de uitleg is niet (helemaal) gelukt. " + (e.message || "") +
+      (art.begrippen.termen.length ? " De woorden die al klaar waren, zijn wel onderstreept." : "");
+  }
+  clearTimeout(gepland);
+  clearInterval(klok);
+  toon(art);
 }
 
 async function toonArtikel(url) {
@@ -424,18 +562,7 @@ async function toonArtikel(url) {
   const eerder = lees("wk-eerder", []).filter((e) => e.url !== url);
   bewaar("wk-eerder", [{ url, titel: art.titel, krant: art.krant, op: Date.now() }, ...eerder].slice(0, 300));
 
-  if (!art.begrippen && art.kan_uitleggen) {
-    try {
-      const r = await fetch("/api/begrippen?url=" + encodeURIComponent(url));
-      const lijst = await r.json();
-      if (!r.ok) throw new Error(lijst.fout);
-      art.begrippen = lijst;
-      toon(art);
-    } catch (e) {
-      const m = document.querySelector(".bezig-uitleg");
-      if (m) m.textContent = "Het maken van de geheugensteun is niet gelukt. " + (e.message || "");
-    }
-  }
+  if (!art.begrippen && art.kan_uitleggen) laadUitleg(art);
 }
 
 menubalk();

@@ -47,7 +47,7 @@ PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("WIMSKRANT_HOST", "127.0.0.1")
 MODEL = os.environ.get("WIMSKRANT_MODEL", "claude-sonnet-5-5")
 MODEL_SNEL = os.environ.get("WIMSKRANT_MODEL_SNEL", "claude-sonnet-5-5")
-VERSIE = 2  # versie van de begrippenlijst; oudere lijsten worden opnieuw gemaakt
+VERSIE = 3  # versie van de begrippenlijst; oudere lijsten worden opnieuw gemaakt
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130 Safari/537.36")
 
@@ -90,7 +90,7 @@ LOKAAL = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}  # een proxy op deze computer 
 PROXY_GEMELD = False
 
 ARTIKELEN = {}            # sleutel -> artikel (geheugen, zodat we niet steeds opnieuw ophalen)
-SLOTEN = {}               # sleutel -> lock, zodat een begrippenlijst maar één keer tegelijk wordt gemaakt
+BEZIG = {}                # sleutel -> begrippenlijst die nu gemaakt wordt (zie start_begrippen)
 SLOT = threading.Lock()
 VOORPAGINA = {}          # krant -> {"tijd", "data"}
 
@@ -407,25 +407,91 @@ def artikel_als_tekst(art, tot=None):
 
 # ---------- Claude ----------
 
-def vraag_claude(opdracht, model, max_tokens):
+def claude_verzoek(opdracht, model, max_tokens, stroom=False):
     sleutel = os.environ.get("ANTHROPIC_API_KEY")
     if not sleutel:
         return None
-    body = json.dumps({
-        "model": model,
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": opdracht}],
-    }).encode()
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+    body = {"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": opdracht}]}
+    if stroom:
+        body["stream"] = True
+        # Niet eerst stil nadenken: dan verschijnen de eerste woorden na ~1 s in plaats van ~30 s,
+        # met (gemeten) bijna evenveel termen. Sonnet 5.5 kent hiervoor "between_tools".
+        if model.startswith("claude-sonnet-5-5"):
+            body["thinking"] = {"type": "between_tools"}
+    return urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(), headers={
         "x-api-key": sleutel,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     })
-    with urllib.request.urlopen(req, timeout=300) as r:
-        antwoord = json.load(r)
-    tekst = "".join(c.get("text", "") for c in antwoord.get("content", []) if c.get("type") == "text")
+
+
+def json_uit(tekst):
     m = re.search(r"\{.*\}", tekst, re.S)
     return json.loads(m.group(0)) if m else None
+
+
+def vraag_claude(opdracht, model, max_tokens):
+    req = claude_verzoek(opdracht, model, max_tokens)
+    if not req:
+        return None
+    with urllib.request.urlopen(req, timeout=300) as r:
+        antwoord = json.load(r)
+    return json_uit("".join(c.get("text", "") for c in antwoord.get("content", []) if c.get("type") == "text"))
+
+
+def stroom_claude(opdracht, model, max_tokens, bij_tekst):
+    """Zoals vraag_claude, maar roept bij_tekst(tekst tot nu toe) aan terwijl het antwoord binnenkomt."""
+    req = claude_verzoek(opdracht, model, max_tokens, stroom=True)
+    if not req:
+        return None
+    tekst = ""
+    with urllib.request.urlopen(req, timeout=300) as r:
+        for regel in r:
+            if not regel.startswith(b"data:"):
+                continue
+            gebeurtenis = json.loads(regel[5:])
+            if gebeurtenis.get("type") == "error":
+                raise RuntimeError(gebeurtenis.get("error", {}).get("message", "fout van Claude"))
+            delta = gebeurtenis.get("delta") or {}
+            if gebeurtenis.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                tekst += delta["text"]
+                bij_tekst(tekst)
+    return json_uit(tekst)
+
+
+class LijstLezer:
+    """Haalt de samenvatting en de afgeronde termen uit een half binnengekomen JSON-antwoord."""
+    ontleder = json.JSONDecoder()
+
+    def __init__(self):
+        self.samenvatting = None
+        self.termen = []
+        self.pos = None  # waar in de tekst de volgende term begint
+
+    def voed(self, tekst):
+        if self.samenvatting is None:
+            m = re.search(r'"samenvatting"\s*:\s*', tekst)
+            if m:
+                try:
+                    self.samenvatting = self.ontleder.raw_decode(tekst, m.end())[0]
+                except ValueError:
+                    pass  # nog niet compleet
+        if self.pos is None:
+            m = re.search(r'"termen"\s*:\s*\[', tekst)
+            if m:
+                self.pos = m.end()
+        while self.pos is not None:
+            i = self.pos
+            while i < len(tekst) and tekst[i] in " \t\r\n,":
+                i += 1
+            if i >= len(tekst) or tekst[i] != "{":
+                break
+            try:
+                term, self.pos = self.ontleder.raw_decode(tekst, i)
+            except ValueError:
+                break
+            if isinstance(term, dict) and term.get("term"):
+                self.termen.append(term)
 
 
 OPDRACHT_BEGRIPPEN = """Je helpt een lezer met (beginnende) dementie een krantenartikel te volgen.
@@ -452,7 +518,8 @@ Geef ALLEEN geldige JSON terug, in deze vorm:
   "termen": [
     {
       "term": "naam of woord",
-      "vormen": ["alle schrijfwijzen zoals ze LETTERLIJK in de tekst staan, ook achternaam alleen, meervoud, samenstellingen"],
+      "vormen": ["alle schrijfwijzen zoals ze LETTERLIJK in de tekst staan, ook achternaam alleen, bijnaam, meervoud, samenstellingen, en omschrijvingen als 'zijn vader'; NOOIT losse voornaamwoorden zoals hij, zij, ze, hem, haar, zijn, hun"],
+      "namen": ["alleen bij personen: ALLE namen waaronder deze persoon in het artikel voorkomt (volledige naam, voornaam, achternaam, bijnaam), in de volgorde waarin ze voor het eerst genoemd worden; anders leeg"],
       "soort": "persoon" | "plaats" | "organisatie" | "begrip",
       "rol": "wie of wat dit is in dit artikel, in hooguit 8 woorden, alleen met wat bij de eerste vermelding bekend is",
       "feiten": [{"nr": 3, "feit": "korte zin: wat het artikel in blok 3 hierover vertelt"}],
@@ -463,6 +530,11 @@ Geef ALLEEN geldige JSON terug, in deze vorm:
 }
 
 Feiten: alleen wat in het artikel staat, het belangrijkste per blok, hooguit één feit per blok.
+Een schrijfwijze of omschrijving hoort bij precies één term. Kan hij in het artikel bij meer dan één
+persoon horen (een gedeelde achternaam, "zijn naamgenoot", "de twee Erics"), neem hem dan alleen op
+bij de persoon die er in de tekst mee bedoeld wordt, of helemaal niet.
+Noem in elk feit en in elke rol de persoon altijd bij naam: schrijf "Fabien zag ..." en NOOIT "Hij zag ...".
+Ook andere personen in het feit noem je bij naam, niet als "hij", "zij" of "zijn broer".
 Neem alleen feiten op die later nog helpen om het verhaal te volgen.
 """
 
@@ -476,6 +548,10 @@ Regels:
   begin dan met dat te herhalen: "Eerder in dit artikel: ...".
 - Heeft het artikel er eerder NIETS over gezegd, zeg dat dan ook niet; leg het gewoon uit
   zoals het in deze zin bedoeld is.
+- Is "{woord}" een verwijzing naar een persoon (zoals "hij", "zij", "de vader", "de onderzoeker"),
+  zeg dan altijd wie dat is, met de naam én alle andere namen waaronder het artikel deze persoon
+  tot nu toe noemde. Bijvoorbeeld: "Hier gaat het over Eric Demlabing, ook MacDonald genoemd."
+  Noem ook in de rest van de uitleg mensen bij naam, niet als "hij" of "zij".
 - Eenvoudig Nederlands, hooguit 3 korte zinnen, zonder nieuwe moeilijke woorden.
 - Zeg niet dat de lezer dementie heeft en spreek de lezer niet aan.
 
@@ -500,19 +576,52 @@ def bewaarde_begrippen(sleutel):
     return None
 
 
-def maak_begrippen(art):
+def start_begrippen(art):
+    """Begint (eenmalig) met het maken van de begrippenlijst, in een eigen draad.
+
+    Geeft de gedeelde stand terug: samenvatting en termen vullen zich terwijl Claude schrijft.
+    Wie meekijkt wacht op stand["wacht"]. Ook als de lezer de pagina sluit, wordt de lijst afgemaakt
+    en bewaard. Geeft None als de lijst al klaar is."""
+    sleutel = art["sleutel"]
     with SLOT:
-        slot = SLOTEN.setdefault(art["sleutel"], threading.Lock())
-    with slot:  # een tweede aanvraag wacht en krijgt dan de bewaarde lijst
-        lijst = bewaarde_begrippen(art["sleutel"])
-        if lijst:
-            return lijst
-        lijst = vraag_claude(OPDRACHT_BEGRIPPEN + "\n\nARTIKEL:\n\n" + artikel_als_tekst(art), MODEL, 32000)
-        if lijst:
+        if sleutel in BEZIG:
+            return BEZIG[sleutel]
+        if bewaarde_begrippen(sleutel):
+            return None
+        stand = {"samenvatting": None, "termen": [], "klaar": False, "lijst": None, "fout": None,
+                 "wacht": threading.Condition()}
+        BEZIG[sleutel] = stand
+
+    def maak():
+        lezer = LijstLezer()
+
+        def bij_tekst(tekst):
+            oud = (lezer.samenvatting, len(lezer.termen))
+            lezer.voed(tekst)
+            if (lezer.samenvatting, len(lezer.termen)) != oud:
+                with stand["wacht"]:
+                    stand["samenvatting"], stand["termen"] = lezer.samenvatting, list(lezer.termen)
+                    stand["wacht"].notify_all()
+
+        try:
+            lijst = stroom_claude(OPDRACHT_BEGRIPPEN + "\n\nARTIKEL:\n\n" + artikel_als_tekst(art), MODEL, 32000, bij_tekst)
+            if not lijst:
+                raise RuntimeError("geen bruikbaar antwoord")
             lijst["versie"] = VERSIE
             BEGRIPPEN.mkdir(parents=True, exist_ok=True)
-            begrippen_pad(art["sleutel"]).write_text(json.dumps(lijst, ensure_ascii=False, indent=2), encoding="utf-8")
-        return lijst
+            begrippen_pad(sleutel).write_text(json.dumps(lijst, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print("Begrippenlijst mislukt:", e, file=sys.stderr)
+            lijst = None
+        with stand["wacht"]:
+            stand["lijst"], stand["klaar"] = lijst, True
+            stand["fout"] = None if lijst else "Het maken van de uitleg is mislukt."
+            stand["wacht"].notify_all()
+        with SLOT:
+            BEZIG.pop(sleutel, None)
+
+    threading.Thread(target=maak, daemon=True).start()
+    return stand
 
 
 def zoek_uitleg(url, woord, nr):
@@ -663,6 +772,47 @@ class Handler(BaseHTTPRequestHandler):
                   "HttpOnly; SameSite=Lax" + ("; Secure" if self.via_https() else ""))
         self.doorsturen(terug, cookie)
 
+    def stroom_begrippen(self, art, lijst):
+        """Stuurt de begrippenlijst als server-sent events: eerst de samenvatting, dan term na term."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        self.close_connection = True
+
+        def stuur(soort, data=None):
+            regel = f"event: {soort}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n" if soort else ": even geduld\n\n"
+            self.wfile.write(regel.encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            stand = None if lijst else start_begrippen(art)
+            if stand is None:
+                return stuur("klaar", lijst or bewaarde_begrippen(art["sleutel"]))
+            samenvatting_gestuurd, gestuurd = False, 0
+            while True:
+                with stand["wacht"]:
+                    if not stand["klaar"] and len(stand["termen"]) == gestuurd and \
+                            (samenvatting_gestuurd or stand["samenvatting"] is None):
+                        stand["wacht"].wait(15)
+                    samenvatting, termen = stand["samenvatting"], stand["termen"]
+                    klaar, eind, fout = stand["klaar"], stand["lijst"], stand["fout"]
+                nieuw = False
+                if samenvatting is not None and not samenvatting_gestuurd:
+                    stuur("samenvatting", samenvatting)
+                    samenvatting_gestuurd = nieuw = True
+                for term in termen[gestuurd:]:
+                    stuur("term", term)
+                    nieuw = True
+                gestuurd = len(termen)
+                if klaar:
+                    return stuur("klaar", eind) if eind else stuur("fout", {"fout": fout})
+                if not nieuw:
+                    stuur(None)  # houdt de verbinding open tijdens een lange stilte
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # lezer is weg; de lijst wordt op de achtergrond afgemaakt
+
     def url_param(self, q):
         url = (q.get("url") or [""])[0].strip()
         return url if url.startswith(("http://", "https://")) else None
@@ -708,11 +858,13 @@ class Handler(BaseHTTPRequestHandler):
             if not url:
                 return self.stuur(400, {"fout": "Geen link."})
             try:
-                lijst = maak_begrippen(artikel_uit_geheugen(url))
-            except Exception as e:
-                print("Begrippenlijst mislukt:", e, file=sys.stderr)
-                return self.stuur(500, {"fout": "Het maken van de uitleg is mislukt."})
-            return self.stuur(200 if lijst else 503, lijst or {"fout": "Geen ANTHROPIC_API_KEY ingesteld."})
+                art = artikel_uit_geheugen(url)
+            except (urllib.error.URLError, TimeoutError):
+                return self.stuur(502, {"fout": "Het artikel kon niet worden opgehaald."})
+            lijst = bewaarde_begrippen(art["sleutel"])
+            if not lijst and not os.environ.get("ANTHROPIC_API_KEY"):
+                return self.stuur(503, {"fout": "Geen ANTHROPIC_API_KEY ingesteld."})
+            return self.stroom_begrippen(art, lijst)
 
         if u.path == "/api/uitleg":
             url = self.url_param(q)
